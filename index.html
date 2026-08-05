@@ -279,7 +279,26 @@ function mxPatRenderList(){
   $('patientList').innerHTML=rows.length?rows.map(p=>`<button type="button" class="patient-item ${mxPatSelected?.key===p.key?'active':''}" data-patient-key="${esc(p.key)}"><b>${esc(p.nombre)}</b><small>Expediente: ${esc(p.expediente||'—')} · ${p.registros||0} movimientos de Salidas · ${p.totalPzs||0} pzs${p.folioAsignado?` · Folio: ${esc(p.folioAsignado)}`:''}${p.ultimoServicio?` · Último servicio: ${esc(p.ultimoServicio)}`:''}</small></button>`).join(''):'<div class="patient-empty">No se encontraron pacientes.</div>';
   $('patientList').querySelectorAll('[data-patient-key]').forEach(b=>b.onclick=()=>mxPatSelect(b.dataset.patientKey));
 }
-function mxPatOnlySales(items){return(Array.isArray(items)?items:[]).filter(r=>!txt(r?.source)||norm(r.source)==='SALIDAS')}
+function mxPatMovementKey(r){
+  const linked=txt(r?._mxSourceSalidaOpId||r?.source_salida_op_id||r?.linkedSalidaOpId);if(linked)return`OP|${norm(linked)}`;
+  const date=txt(r?.fecha||r?.fechaIso).slice(0,10),patient=norm(r?.patientKey||`${r?.expediente||''}|${r?.paciente||r?.nombre||''}`);
+  return['MOV',patient,date,norm(r?.folioPacienteAsignado||r?.folio),norm(r?.clave||r?.medicamento||r?.descripcion),norm(r?.lote),num(r?.pzs??r?.cantidadRecibida),num(r?.ex_ini??r?.antes),num(r?.ex_fin??r?.saldo_final)].join('|');
+}
+function mxPatPreferMovement(previous,incoming){
+  if(!previous)return incoming;if(!incoming)return previous;
+  const prevSales=norm(previous?.source||'SALIDAS')==='SALIDAS',nextSales=norm(incoming?.source||'SALIDAS')==='SALIDAS';
+  const primary=nextSales&&!prevSales?incoming:previous,secondary=primary===incoming?previous:incoming,merged={...secondary,...primary};
+  for(const key of ['paciente','expediente','medicamento','descripcion','servicio','servicioIniciales','usuarioSolicita','solicitante','enfermeraResponsableColectivo','observaciones'])if(!txt(merged[key]))merged[key]=secondary[key];
+  merged.source='SALIDAS';return merged;
+}
+function mxPatOnlySales(items){
+  const unique=new Map();
+  for(const row of (Array.isArray(items)?items:[])){
+    if(!row)continue;const source=norm(row.source||'SALIDAS');if(source&&!['SALIDAS','ANTIBIOTICOS'].includes(source))continue;
+    const key=mxPatMovementKey(row);unique.set(key,mxPatPreferMovement(unique.get(key),row));
+  }
+  return Array.from(unique.values()).sort((a,b)=>txt(a?.fechaIso||a?.fecha).localeCompare(txt(b?.fechaIso||b?.fecha))||txt(a?._id).localeCompare(txt(b?._id)));
+}
 function mxPatPrefillSelectedProfile(p){if(!p)return;$('orderType').value='Colectivo justificado';typeChanged();$('patientName').value=p.nombre||'';$('patientFile').value=p.expediente||'';$('patientAge').value=p.edad||'';$('patientGender').value=p.genero||'';$('patientDiagnosis').value=p.diagnostico||'';$('patientBed').value=p.numeroCama||'';$('patientDose').value=p.dosisIndicada||'';$('patientDoseUnit').value=p.dosisUnidad||'';$('patientDoseHours').value=p.dosisCadaHoras||'';$('patientDays').value=p.tiempoTratamientoDias||'';const last=services.find(x=>norm(x.nombre)===norm(p.ultimoServicio));if(!$('serviceName').value&&last)$('serviceName').value=last.nombre;renderPatientContext()}
 async function mxPatSelect(key){
   mxPatSelected=mxPatCatalog.find(p=>p.key===key)||null;mxPatRows=[];mxPatRenderList();mxPatRender();
@@ -291,7 +310,7 @@ async function mxPatSelect(key){
   mxPatRender(mxPatRows.length?'Se conserva el historial publicado.':'El sistema principal todavía no publica movimientos para este paciente.');
 }
 function mxPatRender(message=''){
-  const p=mxPatSelected,rows=mxPatRows.slice().sort((a,b)=>txt(b.fechaIso||b.fecha).localeCompare(txt(a.fechaIso||a.fecha))),pzs=rows.reduce((s,r)=>s+num(r.pzs),0);
+  mxPatRows=mxPatOnlySales(mxPatRows);const p=mxPatSelected,rows=mxPatRows.slice().sort((a,b)=>txt(b.fechaIso||b.fecha).localeCompare(txt(a.fechaIso||a.fecha))),pzs=rows.reduce((s,r)=>s+num(r.pzs),0);
   patientContext=p?patientContextFromRows(rows):blankPatientContext();renderPatientContext();
   $('patientUseInOrder').disabled=!p;
   $('patientSummary').innerHTML=p?`<span class="patient-chip">Paciente: ${esc(p.nombre)}</span><span class="patient-chip">Expediente: ${esc(p.expediente||'—')}</span>${p.edad?`<span class="patient-chip">Edad: ${esc(p.edad)}</span>`:''}${p.genero?`<span class="patient-chip">Género: ${esc(p.genero)}</span>`:''}<span class="patient-chip patient-folio-note">Folio asignado: ${esc(patientContext.assignedFolio||'Sin folio')}</span><span class="patient-chip">Servicio original: ${esc(patientContext.originService||'—')}</span><span class="patient-chip">Último servicio: ${esc(patientContext.lastService||'—')}</span><span class="patient-chip">Movimientos de Salidas: ${rows.length}</span><span class="patient-chip">Piezas: ${pzs}</span>${message?`<span class="patient-chip">${esc(message)}</span>`:''}`:'<span class="patient-chip">Selecciona un paciente.</span>';
