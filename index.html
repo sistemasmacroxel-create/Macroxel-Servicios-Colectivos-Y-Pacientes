@@ -788,18 +788,37 @@ function renderCart(){
   const updateTotals=()=>{$('cartProducts').textContent=cart.length;$('cartPieces').textContent=cart.reduce((s,x)=>s+num(x.qty),0)};
   updateTotals();
   box.querySelectorAll('[data-qty]').forEach(input=>{
-    const apply=()=>{
+    const commit=(force=false)=>{
       const x=cart[num(input.dataset.qty)];if(!x)return;
-      let qty=Math.max(1,Math.floor(num(input.value)||1));
+      const raw=String(input.value??'').trim();
+      const ask=box.querySelector(`[data-cart-ask="${input.dataset.qty}"]`);
+      // Mientras el usuario edita, permitir que el campo quede temporalmente vacío.
+      // Antes se convertía "" a 1 en cada input y por eso era imposible borrar el valor.
+      if(raw===''){
+        x.qtyManual=true;
+        if(ask)ask.textContent='A solicitar —';
+        if(!force)return;
+        const fallback=Math.max(1,Math.floor(num(x.qty)||1));
+        input.value=String(fallback);
+        if(ask)ask.textContent=`A solicitar ${fallback}`;
+        updateTotals();
+        return;
+      }
+      let qty=Math.floor(Number(raw));
+      if(!Number.isFinite(qty)||qty<1){
+        if(!force)return;
+        qty=Math.max(1,Math.floor(num(x.qty)||1));
+      }
       const remaining=Math.max(0,Math.floor(num(x.cantidadRestanteAntes))),limited=!ordinary&&mxHasReliableTreatmentLimit(x)&&remaining>0;
       if(limited)qty=Math.min(remaining,qty);
-      x.qty=qty;x.qtyManual=true;x.cantidadSolicitudActual=qty;x.cantidadRecibidaSolicitada=qty;input.value=String(qty);
-      const ask=box.querySelector(`[data-cart-ask="${input.dataset.qty}"]`);if(ask)ask.textContent=`A solicitar ${qty}`;
+      x.qty=qty;x.qtyManual=true;x.cantidadSolicitudActual=qty;x.cantidadRecibidaSolicitada=qty;
+      if(force||String(qty)!==raw)input.value=String(qty);
+      if(ask)ask.textContent=`A solicitar ${qty}`;
       updateTotals();
     };
-    input.oninput=apply;
-    input.onchange=apply;
-    input.onblur=apply;
+    input.oninput=()=>commit(false);
+    input.onchange=()=>commit(true);
+    input.onblur=()=>commit(true);
   });
   box.querySelectorAll('[data-del]').forEach(b=>b.onclick=()=>{cart.splice(num(b.dataset.del),1);renderCart()});
   $('sendOrder').disabled=!cart.length||!services.length
