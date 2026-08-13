@@ -664,7 +664,30 @@ function selectedService(){const name=txt($('serviceName').value),found=services
 function serviceByInitials(initials){const ini=cleanInitials(initials);return services.find(x=>cleanInitials(x.iniciales)===ini)||null}
 function folioInitials(folio){const parts=txt(folio).split('-').map(x=>txt(x)).filter(Boolean);return cleanInitials(parts.length?parts[parts.length-1]:'')}
 function folioConsecutive(folio){const m=txt(folio).match(/(?:^|[^0-9])(\d{1,6})-/);return m?num(m[1]):0}
-function serviceInfoFromRow(r){let nombre=txt(r?.servicio??r?.service??r?.area??r?.servicio_nombre),iniciales=cleanInitials(r?.servicioIniciales??r?.inicialesServicio??r?.servicio_iniciales);if(!iniciales&&nombre){const found=services.find(x=>norm(x.nombre)===norm(nombre));if(found)iniciales=found.iniciales}if(!nombre&&iniciales){const found=serviceByInitials(iniciales);nombre=found?.nombre||iniciales}if(!nombre&&!iniciales){iniciales=folioInitials(r?.folio);const found=serviceByInitials(iniciales);nombre=found?.nombre||iniciales}return{nombre:txt(nombre),iniciales:cleanInitials(iniciales)}}
+function serviceInfoFromRow(r){
+  let nombre=txt(r?.servicio??r?.service??r?.area??r?.servicio_nombre),iniciales=cleanInitials(r?.servicioIniciales??r?.inicialesServicio??r?.servicio_iniciales);
+  let found=null;
+  if(nombre){
+    found=services.find(x=>norm(x.nombre)===norm(nombre))||null;
+    if(found){nombre=found.nombre;iniciales=cleanInitials(found.iniciales)||iniciales}
+    else{
+      const asInitials=serviceByInitials(nombre);
+      if(asInitials){found=asInitials;nombre=asInitials.nombre;iniciales=cleanInitials(asInitials.iniciales)}
+    }
+  }
+  if(iniciales){
+    const byInitials=serviceByInitials(iniciales);
+    if(byInitials){
+      iniciales=cleanInitials(byInitials.iniciales);
+      if(!nombre||cleanInitials(nombre)===iniciales)nombre=byInitials.nombre;
+    }
+  }
+  if(!nombre&&!iniciales){
+    iniciales=folioInitials(r?.folioPacienteAsignado||r?.folioAsignadoPaciente||r?.folio);
+    const byFolio=serviceByInitials(iniciales);nombre=byFolio?.nombre||iniciales;
+  }
+  return{nombre:txt(nombre),iniciales:cleanInitials(iniciales)}
+}
 function blankPatientContext(){return{patientKey:'',assignedFolio:'',originService:'',originInitials:'',lastService:'',lastInitials:'',lastDate:'',lastRow:null,medicationKey:'',medicationName:''}}
 function mxPatientMedicationIdentity(source={}){return{key:norm(source.clave||source.medicamentoClave||''),name:norm(source.descripcion||source.medicamento||'')}}
 function mxPatientContextMatchesProduct(ctx=patientContext,product=cart[0]){if(!ctx||!product||!txt(ctx.assignedFolio))return false;const a={key:norm(ctx.medicationKey),name:norm(ctx.medicationName)},b=mxPatientMedicationIdentity(product);if(a.key&&b.key)return a.key===b.key;if(a.name&&b.name)return a.name===b.name;return false}
@@ -974,7 +997,7 @@ async function printOrder(r,final){
 
 // ===== Consulta de pacientes integrada desde el visor =====
 let mxPatCatalog=[],mxPatRows=[],mxPatPublishedHistory={},mxPatSelected=null,mxPatLoaded=false;
-const MX_PAT_LIST_CACHE='mx_colectivos_patient_list_v3',MX_PAT_HISTORY_CACHE='mx_colectivos_patient_history_v3';
+const MX_PAT_LIST_CACHE='mx_colectivos_patient_list_v4',MX_PAT_HISTORY_CACHE='mx_colectivos_patient_history_v4';
 function mxPatCacheRead(key,fallback){try{const x=JSON.parse(localStorage.getItem(key)||'null');return x??fallback}catch(_e){return fallback}}
 function mxPatCacheWrite(key,value){try{localStorage.setItem(key,JSON.stringify(value))}catch(_e){}}
 function mxPatHistoryCached(key){const all=mxPatCacheRead(MX_PAT_HISTORY_CACHE,{});return Array.isArray(all?.[key]?.items)?all[key].items:[]}
@@ -1023,28 +1046,34 @@ function mxPatRenderList(){
 }
 function mxPatSource(r={}){const s=norm(r.source||r.origen||r.tabla||r.modulo||'SALIDAS');return s.includes('ANTIBIOT')?'ANTIBIOTICOS':'SALIDAS'}
 function mxPatDay(r={}){const raw=txt(r.fechaIso||r.createdAt||r.fecha||r.fechaTexto);const d=new Date(raw);if(!Number.isNaN(d.getTime()))return d.toISOString().slice(0,10);const m=raw.match(/(\d{4})[-/](\d{1,2})[-/](\d{1,2})/);if(m)return`${m[1]}-${String(m[2]).padStart(2,'0')}-${String(m[3]).padStart(2,'0')}`;return raw.slice(0,10)}
+function mxPatMirrorTime(r={}){const t=mxPatMovementTime(r);return Number.isFinite(t)&&t>0?t:0}
 function mxPatMovementIdentity(r={}){
-  const opIds=[r._mxSourceSalidaOpId,r.source_salida_op_id,r.linkedSalidaOpId,r.sourceOpId,r.salidaOpId,r._mx_op_id,r.op_id].map(txt).filter(Boolean).map(x=>'OP|'+norm(x));
-  const patient=norm(r.patientKey||`${r.expediente||''}|${r.paciente||r.patient||r.nombre||''}`),day=mxPatDay(r),folio=norm(r.folioPacienteAsignado||r.folioAsignadoPaciente||r.folio||r.folioSolicitud),qty=num(r.pzs??r.cantidadRecibida??r.cantidadSurtida??r.cantidad),lot=norm(r.lote||r.lot||''),products=[r.clave,r.medicamento,r.descripcion,r.producto].map(norm).filter(Boolean).filter((v,i,a)=>a.indexOf(v)===i),base=`${patient}|${day}|${folio}|${qty}`;
-  const strict=[],mirror=[];for(const product of (products.length?products:['SIN_PRODUCTO'])){strict.push(`MOV|${base}|${product}|${lot}`);mirror.push(`MIRROR|${base}|${product}`)}
-  return{opIds,strict,mirror,source:mxPatSource(r)}
+  const opIds=[r._mxSourceSalidaOpId,r.source_salida_op_id,r.linkedSalidaOpId,r.sourceOpId,r.salidaOpId,r._mx_op_id,r.op_id,r.operationId].map(txt).filter(Boolean).map(x=>'OP|'+norm(x));
+  const patient=norm(r.patientKey||`${r.expediente||''}|${r.paciente||r.patient||r.nombre||''}`),folio=norm(r.folioPacienteAsignado||r.folioAsignadoPaciente||r.folio||r.folioSolicitud),qty=num(r.pzs??r.cantidadRecibida??r.cantidadSurtida??r.cantidad),lot=norm(r.lote||r.lot||''),products=[r.clave,r.medicamento,r.descripcion,r.producto].map(norm).filter(Boolean).filter((v,i,a)=>a.indexOf(v)===i),base=`${patient}|${folio}|${qty}`;
+  const strict=[],mirror=[];for(const product of (products.length?products:['SIN_PRODUCTO'])){strict.push(`MIRROR_LOT|${base}|${product}|${lot}`);mirror.push(`MIRROR|${base}|${product}`)}
+  return{opIds,strict,mirror,source:mxPatSource(r),time:mxPatMirrorTime(r)}
 }
 function mxPatPreferMovement(previous,incoming){
   if(!previous)return incoming;if(!incoming)return previous;
   const prevSales=mxPatSource(previous)==='SALIDAS',nextSales=mxPatSource(incoming)==='SALIDAS',primary=nextSales&&!prevSales?incoming:previous,secondary=primary===incoming?previous:incoming,merged={...secondary,...primary};
-  for(const key of ['paciente','patient','nombre','expediente','medicamento','descripcion','clave','lote','caducidad','servicio','servicioIniciales','usuarioSolicita','solicitante','enfermeraResponsableColectivo','observaciones','diagnostico','edad','genero','sexo','numeroCama'])if(!txt(merged[key]))merged[key]=secondary[key];
+  for(const key of ['paciente','patient','nombre','expediente','medicamento','descripcion','clave','lote','caducidad','servicio','servicioIniciales','usuarioSolicita','solicitante','enfermeraResponsableColectivo','observaciones','diagnostico','edad','genero','sexo','numeroCama','operationId','linkedSalidaOpId'])if(!txt(merged[key]))merged[key]=secondary[key];
   merged.source=mxPatSource(primary);merged._mxDeduplicated=true;return merged
 }
 function mxPatOnlySales(items){
-  // Cada salida real debe conservarse, incluso si el mismo medicamento se surtió varias veces el mismo día.
-  // Solo se fusionan: (1) registros con el mismo ID de operación, o (2) el espejo SALIDAS/ANTIBIOTICOS de una misma entrega.
+  // Un movimiento real de Salidas puede existir también como espejo en Antibióticos.
+  // Se emparejan uno a uno por paciente + folio + medicamento + cantidad (+ lote cuando existe),
+  // aunque la fecha del espejo difiera. Movimientos distintos del mismo origen nunca se fusionan.
   const groups=[],opMap=new Map(),strictMap=new Map(),mirrorMap=new Map();
-  const crossSourceCandidate=(map,key,source)=>{for(const i of (map.get(key)||[])){const g=groups[i];if(g&&!g.sources.has(source))return i}return null};
+  const chooseClosest=(map,keys,identity)=>{
+    let best=null,bestDelta=Infinity;
+    for(const key of keys){for(const i of (map.get(key)||[])){const g=groups[i];if(!g||g.sources.has(identity.source))continue;const gt=mxPatMirrorTime(g.row),delta=identity.time&&gt?Math.abs(identity.time-gt):0;if(best==null||delta<bestDelta){best=i;bestDelta=delta}}}
+    return best
+  };
   for(const row of (Array.isArray(items)?items:[])){
     if(!row||!mxPatRecent8(row))continue;const identity=mxPatMovementIdentity(row);let index=null;
     for(const key of identity.opIds){if(opMap.has(key)){index=opMap.get(key);break}}
-    if(index==null)for(const key of identity.strict){index=crossSourceCandidate(strictMap,key,identity.source);if(index!=null)break}
-    if(index==null)for(const key of identity.mirror){index=crossSourceCandidate(mirrorMap,key,identity.source);if(index!=null)break}
+    if(index==null)index=chooseClosest(strictMap,identity.strict,identity);
+    if(index==null)index=chooseClosest(mirrorMap,identity.mirror,identity);
     if(index==null){index=groups.length;groups.push({row:{...row,source:identity.source},sources:new Set([identity.source])})}
     else{groups[index].row=mxPatPreferMovement(groups[index].row,{...row,source:identity.source});groups[index].sources.add(identity.source)}
     for(const key of identity.opIds)opMap.set(key,index);
