@@ -273,7 +273,6 @@ window.mxUnifiedActivation={txt,norm,code,label,deviceId,keyOf,baseState,applica
 <div style="display:flex;justify-content:space-between;gap:10px;align-items:center;flex-wrap:wrap;margin-bottom:12px">
 <div>
 <h3 style="margin:0">Pacientes y medicamentos suministrados</h3>
-<p style="margin:3px 0 0;color:#64748b;font-size:10px">Pacientes registrados y movimientos de los últimos 30 días.</p>
 </div>
 <div class="patient-header-actions">
 <button class="btn ok" id="patientAdd">＋ Paciente</button>
@@ -700,7 +699,7 @@ function mxApplyActivatedIdentity(record={}){
 }
 async function mxResumeActivatedDevice(record={}){
   if(!mxApplyActivatedIdentity(record))return false;
-  await Promise.allSettled([syncInventory(true),syncServices(true),syncDoctors(true),mxPatLoadList(true)]);
+  await Promise.allSettled([syncInventory(true),syncServices(true),syncDoctors(true)]);
   pollHistory();
   return true;
 }
@@ -977,115 +976,22 @@ function mxPatHistoryCached(key){const all=mxPatCacheRead(MX_PAT_HISTORY_CACHE,{
 function mxPatSaveHistory(key,items){const all=mxPatCacheRead(MX_PAT_HISTORY_CACHE,{}),now=Date.now();all[key]={at:now,items:mxPatOnlySales(items).slice(-60)};const trimmed=Object.fromEntries(Object.entries(all).sort((a,b)=>num(b[1]?.at)-num(a[1]?.at)).slice(0,50));mxPatCacheWrite(MX_PAT_HISTORY_CACHE,trimmed)}
 function mxPatQueryId(){return 'pq_'+Date.now()+'_'+Math.random().toString(36).slice(2,8)}
 function mxPatDate(v){const s=txt(v);if(!s)return'';const d=new Date(s);if(!Number.isNaN(d.getTime()))return d.toLocaleDateString('es-MX');return s}
-function mxPatRecent30(row={}){const raw=txt(row.fechaIso||row.createdAt||row.fecha||row.fechaTexto);if(!raw)return true;let d=new Date(raw);if(Number.isNaN(d.getTime())){let match=raw.match(/^(\d{1,2})[\/-](\d{1,2})[\/-](\d{4})/);if(match)d=new Date(+match[3],+match[2]-1,+match[1],12)}if(Number.isNaN(d.getTime()))return true;const min=new Date();min.setHours(0,0,0,0);min.setDate(min.getDate()-29);return d>=min}
+function mxPatRecent8(row={}){const raw=txt(row.fechaIso||row.createdAt||row.fecha||row.fechaTexto);if(!raw)return true;let d=new Date(raw);if(Number.isNaN(d.getTime())){let m=raw.match(/^(\d{1,2})[\/-](\d{1,2})[\/-](\d{4})/);if(m)d=new Date(+m[3],+m[2]-1,+m[1],12)}if(Number.isNaN(d.getTime()))return true;const min=new Date();min.setHours(0,0,0,0);min.setDate(min.getDate()-7);return d>=min}
 function mxPatHashText(value){let h=2166136261;for(const c of String(value)){h^=c.charCodeAt(0);h=Math.imul(h,16777619)}return(h>>>0).toString(36)}
 function mxPatKey(name,expediente=''){const identity=txt(expediente)?`EXP:${norm(expediente)}|N:${norm(name)}`:`N:${norm(name)}`;return'p_'+mxPatHashText(identity)}
 function mxPatMapProfile(p={}){const nombre=txt(p.nombre||p.patient||p.paciente),expediente=txt(p.expediente),tratamientos=Array.isArray(p.tratamientos)?p.tratamientos.map(t=>({...t})):[];return{key:txt(p.key)||mxPatKey(nombre,expediente),nombre,expediente,totalPzs:num(p.totalPzs),registros:num(p.registros),foliosCount:num(p.foliosCount),medicamentosCount:num(p.medicamentosCount),ultimaFecha:txt(p.ultimaFecha),folioAsignado:txt(p.folioAsignado),ultimoServicio:txt(p.ultimoServicio),edad:txt(p.edad),genero:txt(p.genero||p.sexo),diagnostico:txt(p.diagnostico),numeroCama:txt(p.numeroCama||p.numeroCamas),dosisIndicada:num(p.dosisIndicadaValor??p.dosisIndicada),dosisUnidad:txt(p.dosisUnidad),dosisCadaHoras:num(p.dosisCadaHoras||p.frecuenciaHoras),tiempoTratamientoDias:num(p.tiempoTratamientoDias||p.diasTratamiento),medicamentoClave:txt(p.medicamentoClave),medicamento:txt(p.medicamento),unidadMedida:txt(p.unidadMedida),contenidoEnvase:num(p.contenidoEnvase),cantidadSolicitadaCalculada:num(p.cantidadSolicitadaCalculada||p.cantidadTratamientoTotal),cantidad24Horas:num(p.cantidad24Horas),cantidadRecibidaAcumulada:num(p.cantidadRecibidaAcumulada),cantidadRestante:num(p.cantidadRestante),enfermeraResponsableColectivo:txt(p.enfermeraResponsableColectivo||p.enfermera_responsable_colectivo||p.usuarioSolicita||p.createdBy),tratamientos,createdAt:txt(p.createdAt),source:txt(p.source)}}
 async function mxPatLoadList(force=false){
-  if(mxPatLoadRunning)return mxPatCatalog;
-  mxPatLoadRunning=true;
-  const selectedKey=mxPatSelected?.key||'';
-  const listBox=$('patientList');
+  if(mxPatLoadRunning)return mxPatCatalog;mxPatLoadRunning=true;const selectedKey=mxPatSelected?.key||'';
+  if(!mxPatCatalog.length){const cached=mxPatCacheRead(MX_PAT_LIST_CACHE,[]);if(Array.isArray(cached)&&cached.length){mxPatCatalog=cached.map(mxPatMapProfile);mxPatLoaded=true;mxPatRenderList()}}
+  if(!force&&mxPatCatalog.length){mxPatLoadRunning=false;setTimeout(()=>mxSyncChangedData(false),0);return mxPatCatalog}
+  if(force&&!mxPatCatalog.length)$('patientList').innerHTML='<div class="patient-empty">Actualizando pacientes...</div>';
   try{
-    if(!mxPatCatalog.length){
-      const cached=mxPatCacheRead(MX_PAT_LIST_CACHE,[]);
-      if(Array.isArray(cached)&&cached.length){
-        mxPatCatalog=cached.map(mxPatMapProfile).filter(p=>p.nombre);
-        mxPatLoaded=true;
-        mxPatRenderList();
-      }
-    }
-    if(!force&&mxPatCatalog.length){
-      setTimeout(()=>mxSyncChangedData(false),0);
-      return mxPatCatalog;
-    }
-    if(listBox)listBox.innerHTML='<div class="patient-empty">Actualizando pacientes...</div>';
-
-    const [data,extra,publishedHistory]=await Promise.all([
-      get(`/antibiotic_patient_list/${BRANCH}`).catch(()=>null),
-      get(`${PATIENT_CATALOG_ROOT}/${BRANCH}`).catch(()=>null),
-      get(`/antibiotic_patient_history/${BRANCH}/patients`).catch(()=>null)
-    ]);
-    const merged=new Map();
-    const publishedList=Array.isArray(data?.patients)?data.patients:Object.values(data?.patients||{});
-
-    for(const p of publishedList){
-      const row=mxPatMapProfile({...p,source:'SALIDAS'});
-      if(row.key&&row.nombre)merged.set(row.key,row);
-    }
-    for(const p of Object.values(extra||{})){
-      const row=mxPatMapProfile({...p,source:'CATALOGO'});
-      if(!row.key||!row.nombre)continue;
-      const prev=merged.get(row.key)||{};
-      merged.set(row.key,{...row,...prev,
-        edad:row.edad||prev.edad,
-        genero:row.genero||prev.genero,
-        dosisIndicada:row.dosisIndicada||prev.dosisIndicada,
-        tiempoTratamientoDias:row.tiempoTratamientoDias||prev.tiempoTratamientoDias,
-        diagnostico:row.diagnostico||prev.diagnostico,
-        numeroCama:row.numeroCama||prev.numeroCama,
-        dosisCadaHoras:row.dosisCadaHoras||prev.dosisCadaHoras,
-        dosisUnidad:row.dosisUnidad||prev.dosisUnidad,
-        medicamentoClave:row.medicamentoClave||prev.medicamentoClave,
-        medicamento:row.medicamento||prev.medicamento,
-        unidadMedida:row.unidadMedida||prev.unidadMedida,
-        contenidoEnvase:row.contenidoEnvase||prev.contenidoEnvase,
-        cantidadSolicitadaCalculada:row.cantidadSolicitadaCalculada||prev.cantidadSolicitadaCalculada,
-        cantidad24Horas:row.cantidad24Horas||prev.cantidad24Horas,
-        cantidadRecibidaAcumulada:row.cantidadRecibidaAcumulada||prev.cantidadRecibidaAcumulada,
-        cantidadRestante:row.cantidadRestante||prev.cantidadRestante,
-        tratamientos:row.tratamientos?.length?row.tratamientos:(prev.tratamientos||[])
-      });
-    }
-
-    // Respaldo: si el listado publicado aún no se ha regenerado, reconstruye pacientes
-    // desde el historial publicado para evitar que la pantalla quede vacía.
-    for(const [historyKey,entry] of Object.entries(publishedHistory||{})){
-      if(merged.has(historyKey))continue;
-      const items=Array.isArray(entry?.items)?entry.items:Object.values(entry?.items||{});
-      const recent=mxPatOnlySales(items);
-      const last=recent.slice().sort((a,b)=>mxPatMovementTime(b)-mxPatMovementTime(a))[0]||{};
-      const nombre=txt(entry?.nombre||last?.paciente||last?.patient||last?.nombre);
-      if(!nombre)continue;
-      const expediente=txt(entry?.expediente||last?.expediente);
-      const key=txt(entry?.key||historyKey)||mxPatKey(nombre,expediente);
-      const profile=mxPatMapProfile({
-        key,nombre,expediente,
-        registros:recent.length,
-        totalPzs:recent.reduce((s,r)=>s+num(r.pzs??r.cantidadRecibida??r.cantidadSurtida),0),
-        ultimaFecha:txt(last.fechaIso||last.fecha),
-        folioAsignado:txt(last.folioPacienteAsignado||last.folio),
-        ultimoServicio:txt(last.servicio),
-        edad:txt(last.edad),genero:txt(last.genero||last.sexo),
-        diagnostico:txt(last.diagnostico),numeroCama:txt(last.numeroCama),
-        dosisIndicadaValor:num(last.dosisIndicadaValor),dosisUnidad:txt(last.dosisUnidad),
-        dosisCadaHoras:num(last.dosisCadaHoras),tiempoTratamientoDias:num(last.tiempoTratamientoDias),
-        medicamentoClave:txt(last.clave),medicamento:txt(last.medicamento||last.descripcion),
-        unidadMedida:txt(last.unidadMedida||last.concentracionMedicamento),contenidoEnvase:num(last.contenidoEnvase),
-        source:'HISTORIAL'
-      });
-      if(profile.key&&profile.nombre)merged.set(profile.key,profile);
-    }
-
-    if(merged.size){
-      mxPatCatalog=Array.from(merged.values()).sort((a,b)=>a.nombre.localeCompare(b.nombre,'es'));
-      mxPatCacheWrite(MX_PAT_LIST_CACHE,mxPatCatalog);
-    }else if(!mxPatCatalog.length){
-      mxPatCatalog=[];
-    }
-    mxPatLoaded=true;
-    if(selectedKey)mxPatSelected=mxPatCatalog.find(p=>p.key===selectedKey)||mxPatSelected;
-    mxPatRenderList();
-    if(mxPatSelected)mxPatRender();
-    return mxPatCatalog;
-  }catch(e){
-    console.warn('[PACIENTES] No se pudo actualizar la lista:',e?.message||e);
-    if(mxPatCatalog.length){mxPatRenderList();return mxPatCatalog;}
-    if(listBox)listBox.innerHTML='<div class="patient-empty">No se pudo cargar la lista de pacientes. Verifica la conexión con el sistema principal.</div>';
-    return [];
-  }finally{
-    mxPatLoadRunning=false;
-  }
+    const [data,extra]=await Promise.all([get(`/antibiotic_patient_list/${BRANCH}`).catch(()=>null),get(`${PATIENT_CATALOG_ROOT}/${BRANCH}`).catch(()=>null)]),merged=new Map();
+    for(const p of (Array.isArray(data?.patients)?data.patients:[])){const row=mxPatMapProfile({...p,source:'SALIDAS'});if(row.key&&row.nombre)merged.set(row.key,row)}
+    for(const p of Object.values(extra||{})){const row=mxPatMapProfile({...p,source:'CATALOGO'});if(!row.key||!row.nombre)continue;const prev=merged.get(row.key)||{};merged.set(row.key,{...row,...prev,edad:row.edad||prev.edad,genero:row.genero||prev.genero,dosisIndicada:row.dosisIndicada||prev.dosisIndicada,tiempoTratamientoDias:row.tiempoTratamientoDias||prev.tiempoTratamientoDias,diagnostico:row.diagnostico||prev.diagnostico,numeroCama:row.numeroCama||prev.numeroCama,dosisCadaHoras:row.dosisCadaHoras||prev.dosisCadaHoras,dosisUnidad:row.dosisUnidad||prev.dosisUnidad,medicamentoClave:row.medicamentoClave||prev.medicamentoClave,medicamento:row.medicamento||prev.medicamento,unidadMedida:row.unidadMedida||prev.unidadMedida,contenidoEnvase:row.contenidoEnvase||prev.contenidoEnvase,cantidadSolicitadaCalculada:row.cantidadSolicitadaCalculada||prev.cantidadSolicitadaCalculada,cantidad24Horas:row.cantidad24Horas||prev.cantidad24Horas,cantidadRecibidaAcumulada:row.cantidadRecibidaAcumulada||prev.cantidadRecibidaAcumulada,cantidadRestante:row.cantidadRestante||prev.cantidadRestante,tratamientos:row.tratamientos?.length?row.tratamientos:(prev.tratamientos||[])})}
+    if(merged.size){mxPatCatalog=Array.from(merged.values()).sort((a,b)=>a.nombre.localeCompare(b.nombre,'es'));mxPatCacheWrite(MX_PAT_LIST_CACHE,mxPatCatalog)}
+    mxPatLoaded=true;if(selectedKey)mxPatSelected=mxPatCatalog.find(p=>p.key===selectedKey)||mxPatSelected;mxPatRenderList();if(mxPatSelected)mxPatRender();return mxPatCatalog
+  }finally{mxPatLoadRunning=false}
 }
 function mxPatRenderList(){
   const q=norm($('patientSearch').value),rows=mxPatCatalog.filter(p=>!q||norm(p.nombre).includes(q)||norm(p.expediente).includes(q)).slice(0,250);
@@ -1112,7 +1018,7 @@ function mxPatOnlySales(items){
   const groups=[],opMap=new Map(),strictMap=new Map(),mirrorMap=new Map();
   const crossSourceCandidate=(map,key,source)=>{for(const i of (map.get(key)||[])){const g=groups[i];if(g&&!g.sources.has(source))return i}return null};
   for(const row of (Array.isArray(items)?items:[])){
-    if(!row||!mxPatRecent30(row))continue;const identity=mxPatMovementIdentity(row);let index=null;
+    if(!row||!mxPatRecent8(row))continue;const identity=mxPatMovementIdentity(row);let index=null;
     for(const key of identity.opIds){if(opMap.has(key)){index=opMap.get(key);break}}
     if(index==null)for(const key of identity.strict){index=crossSourceCandidate(strictMap,key,identity.source);if(index!=null)break}
     if(index==null)for(const key of identity.mirror){index=crossSourceCandidate(mirrorMap,key,identity.source);if(index!=null)break}
@@ -1267,6 +1173,13 @@ function mxPatUseInOrder(){if(!mxPatSelected)return;return mxPatOpenTreatmentCho
 
 function typeChanged(){const value=txt($('orderType').value),selected=!!value,j=selected&&norm(value).includes('JUSTIFICADO');$('justifiedFields').classList.toggle('hidden',!j);$('typeNotice').className='notice compact-context-notice'+(j?' just':'');$('typeNotice').textContent=!selected?'Selecciona el tipo de pedido para continuar.':j?'Colectivo justificado: individual y limitado a un producto. Requiere paciente, médico y cédula; expediente, cama, dosis, edad y sexo son opcionales.':'Colectivo ordinario: permite agregar varios productos. Requiere médico y cédula.';if(!j){resetPatientContext(true);mxPatSelected=null;mxPatRows=[]}if(j&&cart.length>1)cart=cart.slice(0,1);renderCart();mxUpdateOrderContext(true)}
 function showTab(which){$('newView').classList.toggle('hidden',which!=='new');$('patientsView').classList.toggle('hidden',which!=='patients');$('historyView').classList.toggle('hidden',which!=='history');$('tabNew').classList.toggle('active',which==='new');$('tabPatients').classList.toggle('active',which==='patients');$('tabHistory').classList.toggle('active',which==='history');if(which==='history')pollHistory();if(which==='patients')mxPatLoadList(false).catch(e=>{$('patientList').innerHTML=`<div class="patient-empty">${esc(e.message)}</div>`})}
+function mxCollectiveFieldVisible(el){if(!el||el.disabled||el.readOnly||el.type==='hidden')return false;const s=getComputedStyle(el);if(s.display==='none'||s.visibility==='hidden')return false;const r=el.getBoundingClientRect();return !!(r.width||r.height)}
+function mxCollectiveFieldEmpty(el){if(!el)return false;if(el.tagName==='SELECT')return !txt(el.value);if(el.type==='checkbox'||el.type==='radio')return !el.checked;return !txt(el.value)}
+function mxCollectiveFieldScope(el){return el?.closest('#patientCreateGate')||el?.closest('#newView')||null}
+function mxCollectiveSkipEnterAdvance(el){const id=el?.id||'';if(['searchInput','patientSearch','quantityInput'].includes(id))return true;if(id==='doctorName'&&!selectedDoctor)return true;if(id==='newPatientDoctorName'&&!newPatientSelectedDoctor)return true;if(id==='newPatientMedicine'&&!newPatientProduct)return true;return false}
+function mxCollectiveNextEmpty(el){const scope=mxCollectiveFieldScope(el);if(!scope)return false;const fields=[...scope.querySelectorAll('input.input:not([type="hidden"]),select.input,textarea.input')].filter(x=>mxCollectiveFieldVisible(x)&&!x.disabled&&!x.readOnly&&!['searchInput','patientSearch'].includes(x.id));const pos=fields.indexOf(el);if(pos<0)return false;for(let i=pos+1;i<fields.length;i++){const next=fields[i];if(mxCollectiveFieldEmpty(next)){try{next.focus({preventScroll:false})}catch(_e){next.focus()}if(typeof next.select==='function'&&next.tagName==='INPUT'&&next.type!=='number')setTimeout(()=>{try{next.select()}catch(_e){}},0);return true}}try{el.blur()}catch(_e){}return false}
+function mxInstallCollectiveFieldAdvance(){let selectAdvanceTimer=0;const cancelSelectAdvance=()=>{if(selectAdvanceTimer){clearTimeout(selectAdvanceTimer);selectAdvanceTimer=0}};document.addEventListener('focusin',e=>{const el=e.target;if(!(el instanceof HTMLElement)||!mxCollectiveFieldScope(el))return;if(el.tagName!=='SELECT')cancelSelectAdvance();if(el.matches('input.input:not([type="hidden"]),textarea.input')){try{el.setAttribute('enterkeyhint','next')}catch(_e){}}},true);document.addEventListener('pointerdown',e=>{const el=e.target;if(el instanceof HTMLElement&&el.tagName!=='SELECT')cancelSelectAdvance()},true);document.addEventListener('keydown',e=>{if(e.key!=='Enter'||e.shiftKey||e.ctrlKey||e.altKey||e.metaKey)return;const el=e.target;if(!(el instanceof HTMLElement)||!el.matches('input.input:not([type="hidden"]),select.input,textarea.input')||!mxCollectiveFieldScope(el)||mxCollectiveSkipEnterAdvance(el))return;e.preventDefault();cancelSelectAdvance();mxCollectiveNextEmpty(el)},true);document.addEventListener('change',e=>{const el=e.target;if(!(el instanceof HTMLElement)||el.tagName!=='SELECT'||!mxCollectiveFieldScope(el)||!txt(el.value))return;cancelSelectAdvance();selectAdvanceTimer=setTimeout(()=>{selectAdvanceTimer=0;mxCollectiveNextEmpty(el)},360)},true)}
+function mxRecalcActivePatientTreatment(){if(!cart.length||!norm($('orderType')?.value).includes('JUSTIFICADO'))return;const x=cart[0],dose=num($('patientDose')?.value),unit=txt($('patientDoseUnit')?.value),hours=Math.floor(num($('patientDoseHours')?.value)),days=Math.floor(num($('patientDays')?.value));if(hours<1||days<1)return;const calc=mxTreatmentCalculation(dose,unit,hours,days,x);if(calc.needsStrength&&dose>0)return;const total=mxResolveTreatmentTotal(calc,{...x,cantidadTratamientoTotal:0,totalUnidadesTratamiento:0}),previous=Math.max(0,num(x.cantidadRecibidaAcumuladaAnterior)),remaining=total>0?Math.max(0,total-previous):0,daily=mxResolveDailyPieces(calc,{...x,cantidad24Horas:0},total);x.dosisIndicadaValor=dose;x.dosisUnidad=calc.unit||unit;x.dosisCadaHoras=hours;x.tiempoTratamientoDias=days;x.cantidad24Horas=daily;x.totalUnidadesTratamiento=total;x.cantidadTratamientoTotal=total;x.cantidadRestanteAntes=remaining;x.calculatedTreatment=total>0;if(!x.qtyManual&&daily>0)x.qty=remaining>0?Math.min(daily,remaining):daily;renderCart()}
 function bind(){mxInstallCollectiveFieldAdvance();$('deviceIdBox').textContent=deviceId();syncServices(false);syncDoctors(false);mxUpdateOrderContext(false);mxUpdateNewPatientContext(false);$('doctorName').addEventListener('input',()=>{if(selectedDoctor&&norm($('doctorName').value)!==norm(selectedDoctor.nombre))clearDoctorSelection(false);$('orderContextBox')?.classList.remove('collapsed');renderDoctorResults();mxUpdateOrderContext(false)});$('doctorName').addEventListener('focus',renderDoctorResults);document.addEventListener('click',e=>{if(!e.target.closest('.doctor-field')){$('doctorResults').classList.add('hidden');$('newPatientDoctorResults')?.classList.add('hidden')}});$('quantityCancel').onclick=()=>closeQuantity(null);$('quantityAccept').onclick=acceptQuantity;$('quantityInput').onkeydown=e=>{if(e.key==='Enter'){e.preventDefault();acceptQuantity()}else if(e.key==='Escape'){e.preventDefault();closeQuantity(null)}};$('quantityGate').onclick=e=>{if(e.target===$('quantityGate'))closeQuantity(null)};$('actSubmit').onclick=submitActivation;$('actValidate').onclick=()=>validateLicense(true);$('actClose').onclick=()=>$('activationGate').classList.add('hidden');$('searchInput').oninput=renderResults;['patientDose','patientDoseUnit','patientDoseHours','patientDays'].forEach(id=>{const el=$(id);if(el){el.addEventListener('input',mxRecalcActivePatientTreatment);el.addEventListener('change',mxRecalcActivePatientTreatment)}});$('orderType').onchange=()=>{typeChanged();mxUpdateOrderContext(true)};$('serviceName').onchange=()=>{renderPatientContext();mxRememberMainContext();mxUpdateOrderContext(true)};$('orderContextEdit').onclick=()=>mxToggleCompactContext('orderContextBox','orderContextEdit','serviceName');$('newPatientContextEdit').onclick=()=>mxToggleCompactContext('newPatientContextBox','newPatientContextEdit','newPatientService');$('newPatientDataEdit').onclick=()=>mxToggleCompactContext('newPatientDataBox','newPatientDataEdit','newPatientName');mxWatchCompactContextButtons();$('newPatientService').onchange=()=>{mxSaveContextPref({service:txt($('newPatientService').value)});mxUpdateNewPatientContext(true)};['newPatientName','newPatientFile','newPatientAge','newPatientDiagnosis','newPatientBed'].forEach(id=>{const el=$(id);if(el){el.addEventListener('input',()=>{$('newPatientDataBox')?.classList.remove('collapsed');mxUpdateNewPatientData(false)});el.addEventListener('blur',()=>mxUpdateNewPatientData(false))}});$('newPatientGender').addEventListener('change',()=>mxUpdateNewPatientData(false));$('clearPatientFields').onclick=clearActivePatientFields;$('clearCart').onclick=()=>{if(confirm('¿Vaciar el carrito?')){cart=[];renderCart()}};$('sendOrder').onclick=sendOrder;$('tabNew').onclick=()=>showTab('new');$('tabPatients').onclick=()=>showTab('patients');$('tabHistory').onclick=()=>showTab('history');$('patientSearch').oninput=mxPatRenderList;$('patientAdd').onclick=mxNewPatientOpen;$('newPatientCancel').onclick=mxNewPatientClose;const reviewNewPatient=()=>mxNewPatientReview();$('newPatientSave').onclick=reviewNewPatient;$('newPatientSaveTop').onclick=reviewNewPatient;$('patientFinalConfirmCancel').onclick=mxNewPatientReviewClose;$('patientFinalConfirmGate').onclick=e=>{if(e.target===$('patientFinalConfirmGate'))mxNewPatientReviewClose()};$('patientFinalConfirmAccept').onclick=async()=>{const b=$('patientFinalConfirmAccept');if(b.disabled)return;b.disabled=true;mxNewPatientReviewClose();window.__mxNewPatientReviewAccepted=true;try{await mxNewPatientSave()}catch(e){alert('No se pudo guardar el paciente: '+e.message)}finally{window.__mxNewPatientReviewAccepted=false;b.disabled=false}};$('newPatientDoctorName').addEventListener('input',()=>{if(newPatientSelectedDoctor&&norm($('newPatientDoctorName').value)!==norm(newPatientSelectedDoctor.nombre))clearNewPatientDoctorSelection(false);$('newPatientContextBox')?.classList.remove('collapsed');renderNewPatientDoctorResults();mxUpdateNewPatientContext(false)});$('newPatientDoctorName').addEventListener('focus',renderNewPatientDoctorResults);$('newPatientMedicine').addEventListener('focus',()=>{const box=$('newPatientDataBox');if(mxNewPatientDataComplete()&&mxCompactCanAutoCollapse(box)){box?.classList.add('collapsed');mxUpdateNewPatientData(false)}});$('newPatientMedicine').oninput=()=>{newPatientProduct=null;mxNewPatientRenderProducts();mxNewPatientRecalc()};['newPatientDose','newPatientHours','newPatientDays','newPatientUnit'].forEach(id=>$(id).oninput=mxNewPatientRecalc);$('newPatientDaily').oninput=()=>{$('newPatientDaily').dataset.manual='1';mxNewPatientRecalc()};$('patientCreateGate').onclick=e=>{if(e.target===$('patientCreateGate'))mxNewPatientClose()};$('patientClear').onclick=mxPatClear;$('patientUseInOrder').onclick=mxPatUseInOrder;$('patientTreatmentCancel').onclick=mxPatCloseTreatmentChooser;$('patientTreatmentGate').onclick=e=>{if(e.target===$('patientTreatmentGate'))mxPatCloseTreatmentChooser()};$('patientExtensionCancel').onclick=mxPatCloseExtension;$('patientExtensionAccept').onclick=mxPatConfirmExtension;$('patientExtensionAdditional').oninput=()=>{$('patientExtensionRequestNow').dataset.manual='';mxPatExtensionRecalc()};$('patientExtensionRequestNow').oninput=()=>{$('patientExtensionRequestNow').dataset.manual='1';mxPatExtensionRecalc()};$('patientExtensionGate').onclick=e=>{if(e.target===$('patientExtensionGate'))mxPatCloseExtension()};$('refreshHistory').onclick=pollHistory;$('deleteHistory').onclick=()=>{if(confirm('¿Eliminar el historial local de este dispositivo?')){localStorage.removeItem(HIST_KEY);renderHistory()}};renderCart();renderHistory();typeChanged();validateLicense(false);window.addEventListener('online',()=>validateLicense(false));window.addEventListener('mx-viewer-refresh-now',()=>{if(licensed&&user)Promise.allSettled([syncInventory(true),syncServices(true),syncDoctors(true),mxPatLoadList(true),pollHistory()])});window.addEventListener('offline',()=>validateLicense(false));setInterval(()=>validateLicense(false),5*60*1000);setInterval(()=>mxSyncChangedData(false),30000);document.addEventListener('visibilitychange',()=>{if(!document.hidden)mxSyncChangedData(false)});window.addEventListener('focus',()=>mxSyncChangedData(false));window.addEventListener('mx-viewer-config-changed',()=>{mxLastVersions={};PDF_FORMAT_REMOTE_CACHE={at:0,branch:'',data:null};PDF_FORMAT_IMAGE_CACHE.clear();if(licensed&&user)Promise.allSettled([syncInventory(true),syncServices(true),syncDoctors(true),mxPatLoadList(true),pollHistory()])});}
 if(document.readyState==='loading')document.addEventListener('DOMContentLoaded',bind,{once:true});else bind();})();
 </script>
